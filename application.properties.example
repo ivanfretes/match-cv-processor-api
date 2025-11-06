@@ -1,0 +1,5 @@
+# Configuración de OpenAI
+# Copia este archivo a application.properties y completa con tus valores
+OPENAI_API_KEY=tu_api_key_aqui
+OPENAI_MODEL=gpt-3.5-turbo
+
