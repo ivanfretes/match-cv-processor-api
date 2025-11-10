@@ -4,7 +4,14 @@ Implementa la generación de resúmenes de CVs utilizando LLM.
 """
 from typing import Optional
 from openai import OpenAI
-from openai import APIError
+
+# No necesitamos importar las excepciones específicas
+# Las capturaremos de forma genérica y verificaremos si son de OpenAI
+
+
+class OpenAIServiceError(Exception):
+    """Excepción personalizada para errores del servicio de OpenAI."""
+    pass
 
 
 class OpenAIService:
@@ -39,7 +46,7 @@ class OpenAIService:
             Resumen del CV generado por el LLM
             
         Raises:
-            APIError: Si hay un error al comunicarse con la API de OpenAI
+            OpenAIServiceError: Si hay un error al comunicarse con la API de OpenAI
             ValueError: Si el texto del CV está vacío
         """
         if not cv_text or not cv_text.strip():
@@ -82,8 +89,28 @@ class OpenAIService:
             
             return response.choices[0].message.content.strip()
         
-        except APIError as e:
-            raise APIError(f"Error al generar resumen con OpenAI: {str(e)}") from e
         except Exception as e:
-            raise APIError(f"Error inesperado al generar resumen: {str(e)}") from e
+            # Capturar cualquier excepción que pueda ocurrir
+            # Verificar si es una excepción relacionada con OpenAI
+            error_module = str(type(e).__module__).lower()
+            error_type = type(e).__name__
+            
+            # Detectar si es una excepción de OpenAI basándonos en el módulo o tipo
+            is_openai_error = (
+                "openai" in error_module or 
+                "APIError" in error_type or 
+                "APIConnectionError" in error_type or
+                "RateLimitError" in error_type or
+                "APITimeoutError" in error_type
+            )
+            
+            # Extraer el mensaje de error
+            error_message = str(e) if e else "Error desconocido"
+            
+            if is_openai_error:
+                # Es un error de la API de OpenAI
+                raise OpenAIServiceError(f"Error al generar resumen con OpenAI: {error_message}") from e
+            else:
+                # Es un error inesperado (conexión, timeout, etc.)
+                raise OpenAIServiceError(f"Error inesperado al generar resumen: {error_message}") from e
 

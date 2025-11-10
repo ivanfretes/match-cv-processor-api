@@ -4,10 +4,10 @@ from pypdf import PdfReader
 import csv
 import io
 from typing import List, Dict
-from openai import APIError
 
 from config import config
-from services.openai_service import OpenAIService
+from services.openai_service import OpenAIService, OpenAIServiceError
+from utils.text_cleaner import clean_pdf_text
 
 app = FastAPI(title="File Upload Processor", version="1.0.0")
 
@@ -72,7 +72,10 @@ async def upload_pdf(
             page_text = page.extract_text() or ""
             text_content += ("\n" + page_text)
         
-        # Contar caracteres
+        # Limpiar y normalizar el texto extraído
+        text_content = clean_pdf_text(text_content)
+        
+        # Contar caracteres después de la limpieza
         character_count = len(text_content)
         
         # Preparar respuesta base
@@ -93,7 +96,7 @@ async def upload_pdf(
                 )
                 response["summary"] = summary
                 response["summary_generated"] = True
-            except APIError as e:
+            except OpenAIServiceError as e:
                 # Si falla la generación del resumen, no falla toda la operación
                 response["summary"] = None
                 response["summary_generated"] = False
@@ -102,6 +105,11 @@ async def upload_pdf(
                 response["summary"] = None
                 response["summary_generated"] = False
                 response["summary_error"] = str(e)
+            except Exception as e:
+                # Capturar cualquier otro error inesperado
+                response["summary"] = None
+                response["summary_generated"] = False
+                response["summary_error"] = f"Error inesperado: {str(e)}"
         else:
             response["summary_generated"] = False
         
