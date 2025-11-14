@@ -1,11 +1,27 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from pypdf import PdfReader
 import csv
 import io
 from typing import List, Dict
 
+from config import config
+from services.openai_service import OpenAIService, OpenAIServiceError
+from utils.text_cleaner import clean_pdf_text
+
 app = FastAPI(title="File Upload Processor", version="1.0.0")
+
+
+def get_openai_service() -> OpenAIService:
+    """
+    Dependency injection para el servicio de OpenAI.
+    
+    Returns:
+        Instancia configurada de OpenAIService
+    """
+    api_key = config.get_required("OPENAI_API_KEY")
+    model = config.get("OPENAI_MODEL", "gpt-3.5-turbo")
+    return OpenAIService(api_key=api_key, model=model)
 
 
 @app.get("/")
@@ -18,10 +34,24 @@ async def health():
     return {"status": "healthy"}
 
 @app.post("/upload/pdf")
-async def upload_pdf(file: UploadFile = File(...), sentences: int = 5, language: str = "spanish"):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    language: str = "spanish",
+    generate_summary: bool = True,
+    openai_service: OpenAIService = Depends(get_openai_service)
+):
     """
-    Endpoint para subir un PDF y extraer todos los caracteres/texto del documento.
-    Retorna el texto completo extraído del PDF.
+    Endpoint para subir un PDF y extraer el texto del documento.
+    Opcionalmente genera un resumen del CV utilizando OpenAI.
+    
+    Args:
+        file: Archivo PDF a procesar
+        language: Idioma para el resumen (spanish/english)
+        generate_summary: Si True, genera un resumen usando OpenAI
+        openai_service: Servicio de OpenAI inyectado como dependencia
+        
+    Returns:
+        Diccionario con información del PDF y opcionalmente el resumen generado
     """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="El archivo debe ser un PDF")
@@ -42,16 +72,48 @@ async def upload_pdf(file: UploadFile = File(...), sentences: int = 5, language:
             page_text = page.extract_text() or ""
             text_content += ("\n" + page_text)
         
-        # Contar caracteres
+        # Limpiar y normalizar el texto extraído
+        text_content = clean_pdf_text(text_content)
+        
+        # Contar caracteres después de la limpieza
         character_count = len(text_content)
         
-        return {
+        # Preparar respuesta base
+        response = {
             "filename": file.filename,
             "total_pages": total_pages,
             "character_count": character_count,
             "text": text_content,
             "message": f"PDF procesado correctamente. Total de caracteres: {character_count}"
         }
+        
+        # Generar resumen si está habilitado
+        if generate_summary and text_content.strip():
+            try:
+                summary = openai_service.generate_cv_summary(
+                    cv_text=text_content,
+                    language=language
+                )
+                response["summary"] = summary
+                response["summary_generated"] = True
+            except OpenAIServiceError as e:
+                # Si falla la generación del resumen, no falla toda la operación
+                response["summary"] = None
+                response["summary_generated"] = False
+                response["summary_error"] = str(e)
+            except ValueError as e:
+                response["summary"] = None
+                response["summary_generated"] = False
+                response["summary_error"] = str(e)
+            except Exception as e:
+                # Capturar cualquier otro error inesperado
+                response["summary"] = None
+                response["summary_generated"] = False
+                response["summary_error"] = f"Error inesperado: {str(e)}"
+        else:
+            response["summary_generated"] = False
+        
+        return response
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al procesar el PDF: {str(e)}")
